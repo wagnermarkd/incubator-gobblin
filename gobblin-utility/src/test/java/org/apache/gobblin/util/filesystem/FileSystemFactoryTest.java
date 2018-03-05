@@ -18,11 +18,15 @@
 package org.apache.gobblin.util.filesystem;
 
 import java.net.URI;
+import java.security.PrivilegedExceptionAction;
 import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -55,6 +59,38 @@ public class FileSystemFactoryTest {
     FileSystem subBrokerFs =  FileSystemFactory.get(new URI("file:///"), new Configuration(), subBroker);
     Assert.assertEquals(fs, subBrokerFs);
   }
+
+   @Test
+  public void testUGI() throws Exception{
+    Configuration conf = new Configuration();
+    FileSystem dfs1 = getFileSystemAsUser("foo", "hdfs://localhost/", conf);
+    FileSystem dfs2 = getFileSystemAsUser("bar", "hdfs://localhost/", conf);
+    Assert.assertTrue(dfs1 instanceof DistributedFileSystem);
+    Assert.assertNotSame(dfs1, dfs2);
+
+    Configuration instrumentedConf = new Configuration();
+    instrumentedConf.set("fs.hdfs.impl", "org.apache.gobblin.util.filesystem.InstrumentedHDFSFileSystem");
+    FileSystem ifs1 = getFileSystemAsUser("foo", "hdfs://localhost/", instrumentedConf);
+    FileSystem ifs2 = getFileSystemAsUser("bar", "hdfs://localhost/", instrumentedConf);
+    Assert.assertTrue(ifs1 instanceof InstrumentedHDFSFileSystem);
+
+    // This fails
+    Assert.assertNotSame(((InstrumentedHDFSFileSystem) ifs1).underlyingFs,
+        ((InstrumentedHDFSFileSystem) ifs2).underlyingFs);
+  }
+
+  private FileSystem getFileSystemAsUser(String user, String pathString, Configuration conf)
+      throws java.io.IOException, InterruptedException {
+    return UserGroupInformation.createRemoteUser(user).doAs(new PrivilegedExceptionAction<FileSystem>() {
+      @Override
+      public FileSystem run() throws Exception {
+        return new Path(pathString).getFileSystem(conf);
+      }
+    });
+  }
+
+
+
 
   @Test
   public void testCreationWithInstrumentedScheme() throws Exception {
